@@ -95,10 +95,10 @@ export default function Footer() {
           {/* Column 4: Parent & Socials */}
           <div className="flex flex-col gap-4">
             <h4 className="text-xs font-mono font-black tracking-widest text-crucible-navy uppercase">
-              Parent Entity
+              From AlgoForce AI
             </h4>
             <p className="text-xs text-crucible-slate/70 font-sans leading-relaxed">
-              A premium initiative incubated and supported by **AlgoForce AI**.
+              Crucible is a premium startup ecosystem created from the AlgoForce AI innovation studio.
             </p>
             
             <div className="flex gap-3.5 mt-2">

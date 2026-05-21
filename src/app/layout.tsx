@@ -15,7 +15,7 @@ const geistMono = Geist_Mono({
 export const metadata: Metadata = {
   metadataBase: new URL("https://crucible.algoforce.ai"),
   title: "Crucible | Where Founders Are Forged",
-  description: "Crucible is the futuristic innovation ecosystem powering the next generation of builders, startups, and AI-native founders. Incubated by AlgoForce AI.",
+  description: "Crucible is the futuristic startup ecosystem from AlgoForce AI, powering the next generation of builders, startups, and AI-native founders.",
   keywords: [
     "Crucible",
     "AlgoForce AI",
@@ -29,7 +29,7 @@ export const metadata: Metadata = {
   authors: [{ name: "AlgoForce AI" }],
   openGraph: {
     title: "Crucible | Where Founders Are Forged",
-    description: "Crucible is the futuristic innovation ecosystem powering the next generation of builders, startups, and AI-native founders.",
+    description: "Crucible is the futuristic startup ecosystem from AlgoForce AI, powering the next generation of builders, startups, and AI-native founders.",
     url: "https://crucible.algoforce.ai",
     siteName: "Crucible Ecosystem",
     images: [
@@ -46,7 +46,7 @@ export const metadata: Metadata = {
   twitter: {
     card: "summary_large_image",
     title: "Crucible | Where Founders Are Forged",
-    description: "Crucible is the futuristic innovation ecosystem powering the next generation of builders, startups, and AI-native founders.",
+    description: "Crucible is the futuristic startup ecosystem from AlgoForce AI, powering the next generation of builders, startups, and AI-native founders.",
     creator: "@AlgoForceAI",
   },
 };

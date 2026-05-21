@@ -108,7 +108,7 @@ export default function Home() {
                 >
                   <span className="w-2 h-2 rounded-full bg-crucible-amber animate-pulse" />
                   <span className="font-mono text-[10px] font-bold tracking-widest text-crucible-navy/70 uppercase">
-                    An AlgoForce AI Initiative
+                    From AlgoForce AI
                   </span>
                 </motion.div>
 

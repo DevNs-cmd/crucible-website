@@ -151,7 +151,7 @@ export default function SplashScreen({ onComplete }: SplashScreenProps) {
           {/* Loading percentage status bar */}
           <div className="absolute bottom-20 left-1/2 -translate-x-1/2 w-48 flex flex-col items-center gap-3">
             <div className="font-mono text-xs tracking-widest text-crucible-slate/60 flex justify-between w-full">
-              <span>ALGOFORCE AI CORE</span>
+              <span>FROM ALGOFORCE AI</span>
               <span>{progress.toString().padStart(3, "0")}%</span>
             </div>
             {/* Sleek light mode trackbar */}
