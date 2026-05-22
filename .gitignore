@@ -24,6 +24,7 @@
 .DS_Store
 *.pem
 .codex/
+supabase/.temp/
 
 # debug
 npm-debug.log*

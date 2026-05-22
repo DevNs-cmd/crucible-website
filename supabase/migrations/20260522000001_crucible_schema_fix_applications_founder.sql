@@ -114,6 +114,8 @@ alter table public.applications
   alter column tier drop default,
   alter column status drop default;
 
+drop policy if exists "Allow public application inserts" on public.applications;
+
 do $$
 begin
   if exists (
