@@ -9,11 +9,33 @@ import { CheckCircle2, ArrowRight } from "lucide-react";
 export default function Waitlist() {
   const [submitted, setSubmitted] = useState(false);
   const [email, setEmail] = useState("");
+  const [loading, setLoading] = useState(false);
+  const [error, setError] = useState<string | null>(null);
 
-  const handleSubmit = (e: React.FormEvent) => {
+  const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (email) {
-      setSubmitted(true);
+    if (!email) return;
+
+    setLoading(true);
+    setError(null);
+    try {
+      const response = await fetch("/api/waitlist", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({ email }),
+      });
+      const data = await response.json();
+      if (response.ok) {
+        setSubmitted(true);
+      } else {
+        setError(data.error || "Failed to register. Please try again.");
+      }
+    } catch {
+      setError("Unable to connect to the Crucible database network.");
+    } finally {
+      setLoading(false);
     }
   };
 
@@ -42,26 +64,35 @@ export default function Waitlist() {
                 </p>
               </div>
 
+              {/* Error display */}
+              {error && (
+                <div className="p-3 rounded-xl border border-red-200 bg-red-50 text-[10px] font-mono text-red-600 font-bold">
+                  {error}
+                </div>
+              )}
+
               {/* Email */}
               <div className="flex flex-col gap-2">
                 <label className="text-xs font-mono font-bold text-crucible-navy/60 uppercase">Email Address</label>
                 <input
                   type="email"
                   required
+                  disabled={loading}
                   placeholder="builder@nextgen.ai"
                   value={email}
                   onChange={(e) => setEmail(e.target.value)}
-                  className="w-full bg-crucible-bg/60 border border-crucible-navy/10 rounded-xl px-4 py-3 text-xs font-mono placeholder:text-crucible-navy/35 focus:outline-none focus:border-crucible-amber focus:bg-white transition-all text-crucible-navy"
+                  className="w-full bg-crucible-bg/60 border border-crucible-navy/10 rounded-xl px-4 py-3 text-xs font-mono placeholder:text-crucible-navy/35 focus:outline-none focus:border-crucible-amber focus:bg-white transition-all text-crucible-navy disabled:opacity-55"
                 />
               </div>
 
               {/* Submit */}
               <button
                 type="submit"
-                className="w-full py-4 rounded-xl border border-crucible-navy bg-crucible-navy text-white text-xs font-mono font-bold tracking-widest uppercase hover:bg-crucible-amber hover:text-white flex items-center justify-center gap-2 group transition-all duration-300 shadow-md mt-2"
+                disabled={loading}
+                className="w-full py-4 rounded-xl border border-crucible-navy bg-crucible-navy text-white text-xs font-mono font-bold tracking-widest uppercase hover:bg-crucible-amber hover:text-white flex items-center justify-center gap-2 group transition-all duration-300 shadow-md mt-2 disabled:opacity-70 disabled:hover:bg-crucible-navy disabled:hover:text-white cursor-pointer"
               >
-                <span>Join Waitlist</span>
-                <ArrowRight className="w-3.5 h-3.5 transition-transform group-hover:translate-x-1" />
+                <span>{loading ? "Registering..." : "Join Waitlist"}</span>
+                {!loading && <ArrowRight className="w-3.5 h-3.5 transition-transform group-hover:translate-x-1" />}
               </button>
             </form>
           ) : (

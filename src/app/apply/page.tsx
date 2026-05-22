@@ -9,11 +9,42 @@ import { ArrowRight, CheckCircle2 } from "lucide-react";
 export default function Apply() {
   const [submitted, setSubmitted] = useState(false);
   const [formData, setFormData] = useState({ name: "", email: "", links: "", description: "" });
+  const [loading, setLoading] = useState(false);
+  const [error, setError] = useState<string | null>(null);
 
-  const handleSubmit = (e: React.FormEvent) => {
+  const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (formData.name && formData.email) {
-      setSubmitted(true);
+    if (!formData.name || !formData.email) return;
+
+    setLoading(true);
+    setError(null);
+
+    try {
+      const response = await fetch("/api/applications", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({
+          name: formData.name,
+          founder: formData.name,
+          email: formData.email,
+          links: formData.links,
+          project: formData.description,
+          tier: "Core Builder",
+        }),
+      });
+      const data = await response.json();
+
+      if (response.ok) {
+        setSubmitted(true);
+      } else {
+        setError(data.error || "Failed to submit application. Please try again.");
+      }
+    } catch {
+      setError("Unable to connect to the Crucible application network.");
+    } finally {
+      setLoading(false);
     }
   };
 
@@ -39,16 +70,23 @@ export default function Apply() {
                 </h2>
               </div>
 
+              {error && (
+                <div className="p-3 rounded-xl border border-red-200 bg-red-50 text-[10px] font-mono text-red-600 font-bold">
+                  {error}
+                </div>
+              )}
+
               {/* Name */}
               <div className="flex flex-col gap-2">
                 <label className="text-xs font-mono font-bold text-crucible-navy/60 uppercase">Full Name</label>
                 <input
                   type="text"
                   required
+                  disabled={loading}
                   placeholder="Hedy Lamarr"
                   value={formData.name}
                   onChange={(e) => setFormData({ ...formData, name: e.target.value })}
-                  className="w-full bg-crucible-bg/60 border border-crucible-navy/10 rounded-xl px-4 py-3 text-xs font-mono placeholder:text-crucible-navy/35 focus:outline-none focus:border-crucible-amber focus:bg-white transition-all text-crucible-navy"
+                  className="w-full bg-crucible-bg/60 border border-crucible-navy/10 rounded-xl px-4 py-3 text-xs font-mono placeholder:text-crucible-navy/35 focus:outline-none focus:border-crucible-amber focus:bg-white transition-all text-crucible-navy disabled:opacity-55"
                 />
               </div>
 
@@ -58,10 +96,11 @@ export default function Apply() {
                 <input
                   type="email"
                   required
+                  disabled={loading}
                   placeholder="hedy@forged.ai"
                   value={formData.email}
                   onChange={(e) => setFormData({ ...formData, email: e.target.value })}
-                  className="w-full bg-crucible-bg/60 border border-crucible-navy/10 rounded-xl px-4 py-3 text-xs font-mono placeholder:text-crucible-navy/35 focus:outline-none focus:border-crucible-amber focus:bg-white transition-all text-crucible-navy"
+                  className="w-full bg-crucible-bg/60 border border-crucible-navy/10 rounded-xl px-4 py-3 text-xs font-mono placeholder:text-crucible-navy/35 focus:outline-none focus:border-crucible-amber focus:bg-white transition-all text-crucible-navy disabled:opacity-55"
                 />
               </div>
 
@@ -70,10 +109,11 @@ export default function Apply() {
                 <label className="text-xs font-mono font-bold text-crucible-navy/60 uppercase">Github / LinkedIn / Twitter</label>
                 <input
                   type="text"
+                  disabled={loading}
                   placeholder="https://github.com/forger"
                   value={formData.links}
                   onChange={(e) => setFormData({ ...formData, links: e.target.value })}
-                  className="w-full bg-crucible-bg/60 border border-crucible-navy/10 rounded-xl px-4 py-3 text-xs font-mono placeholder:text-crucible-navy/35 focus:outline-none focus:border-crucible-amber focus:bg-white transition-all text-crucible-navy"
+                  className="w-full bg-crucible-bg/60 border border-crucible-navy/10 rounded-xl px-4 py-3 text-xs font-mono placeholder:text-crucible-navy/35 focus:outline-none focus:border-crucible-amber focus:bg-white transition-all text-crucible-navy disabled:opacity-55"
                 />
               </div>
 
@@ -82,20 +122,22 @@ export default function Apply() {
                 <label className="text-xs font-mono font-bold text-crucible-navy/60 uppercase">What are you forging?</label>
                 <textarea
                   rows={4}
+                  disabled={loading}
                   placeholder="Description of your AI product, agent, or technology node..."
                   value={formData.description}
                   onChange={(e) => setFormData({ ...formData, description: e.target.value })}
-                  className="w-full bg-crucible-bg/60 border border-crucible-navy/10 rounded-xl px-4 py-3 text-xs font-mono placeholder:text-crucible-navy/35 focus:outline-none focus:border-crucible-amber focus:bg-white transition-all text-crucible-navy resize-none"
+                  className="w-full bg-crucible-bg/60 border border-crucible-navy/10 rounded-xl px-4 py-3 text-xs font-mono placeholder:text-crucible-navy/35 focus:outline-none focus:border-crucible-amber focus:bg-white transition-all text-crucible-navy resize-none disabled:opacity-55"
                 />
               </div>
 
               {/* Submit */}
               <button
                 type="submit"
-                className="w-full py-4 rounded-xl border border-crucible-navy bg-crucible-navy text-white text-xs font-mono font-bold tracking-widest uppercase hover:bg-crucible-amber hover:text-white flex items-center justify-center gap-2 group transition-all duration-300 shadow-md mt-4"
+                disabled={loading}
+                className="w-full py-4 rounded-xl border border-crucible-navy bg-crucible-navy text-white text-xs font-mono font-bold tracking-widest uppercase hover:bg-crucible-amber hover:text-white flex items-center justify-center gap-2 group transition-all duration-300 shadow-md mt-4 disabled:opacity-70 disabled:hover:bg-crucible-navy disabled:hover:text-white cursor-pointer"
               >
-                <span>Submit Application</span>
-                <ArrowRight className="w-3.5 h-3.5 transition-transform group-hover:translate-x-1" />
+                <span>{loading ? "Submitting..." : "Submit Application"}</span>
+                {!loading && <ArrowRight className="w-3.5 h-3.5 transition-transform group-hover:translate-x-1" />}
               </button>
             </form>
           ) : (

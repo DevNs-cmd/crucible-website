@@ -3,7 +3,9 @@
 import Navbar from "@/components/Navbar";
 import Footer from "@/components/Footer";
 import { motion, AnimatePresence } from "framer-motion";
-import { useState, useEffect, useRef } from "react";
+import { useCallback, useState, useEffect } from "react";
+import type { Session, User } from "@supabase/supabase-js";
+import { isSupabaseBrowserConfigured, supabase } from "@/lib/supabaseClient";
 import { 
   Users, 
   Terminal, 
@@ -16,7 +18,10 @@ import {
   HardDrive, 
   Zap, 
   TrendingUp, 
-  Server
+  Server,
+  Lock,
+  LogOut,
+  AlertTriangle
 } from "lucide-react";
 
 type AdminTab = "analytics" | "applications" | "compute" | "broadcast";
@@ -39,93 +44,27 @@ interface LogEntry {
   type: "info" | "success" | "warning" | "error";
 }
 
+type AdminUser = Pick<User, "email" | "user_metadata">;
+
 export default function AdminDashboard() {
   const [activeTab, setActiveTab] = useState<AdminTab>("analytics");
   const [broadcastTarget, setBroadcastTarget] = useState("all-founders");
   const [broadcastSubject, setBroadcastSubject] = useState("");
   const [broadcastContent, setBroadcastContent] = useState("");
   const [toastMessage, setToastMessage] = useState<string | null>(null);
-  const logIdRef = useRef(4);
-  const nextLogId = () => {
-    logIdRef.current += 1;
-    return `admin-log-${logIdRef.current}`;
-  };
   
-  // Dynamic logs state
-  const [logs, setLogs] = useState<LogEntry[]>([
-    { id: "1", timestamp: "22:42:01", source: "ALGOFORCE_GRID", message: "Node 12 auto-scaled to meet H100 GPU compute spike.", type: "info" },
-    { id: "2", timestamp: "22:40:15", source: "WAITLIST_SVC", message: "New application received from AuraAI (Score: 94/100).", type: "success" },
-    { id: "3", timestamp: "22:35:12", source: "BROADCAST_TWR", message: "Weekly ecosystem digest sent successfully to 1,420 members.", type: "success" },
-    { id: "4", timestamp: "22:15:40", source: "SECURITY_AUTH", message: "Admin role initialized with cryptographically signed token.", type: "info" },
-  ]);
+  // Auth state
+  const [user, setUser] = useState<AdminUser | null>(null);
+  const [session, setSession] = useState<Session | null>(null);
+  const [isAuthorized, setIsAuthorized] = useState<boolean>(false);
+  const [authLoading, setAuthLoading] = useState<boolean>(true);
+  const [submittingAuth, setSubmittingAuth] = useState<boolean>(false);
 
-  // Simulated applications state
-  const [applications, setApplications] = useState<Application[]>([
-    {
-      id: "app-1",
-      name: "Nexus Labs",
-      founder: "Aria Chen",
-      project: "Decentralized physical infrastructure network (DePIN) for local browser model compute sharing.",
-      score: 96,
-      tier: "Elite Resident",
-      status: "pending"
-    },
-    {
-      id: "app-2",
-      name: "Zephyr Systems",
-      founder: "Marcus Vance",
-      project: "Zero-latency audio-to-audio conversational agents running on lightweight edge matrices.",
-      score: 89,
-      tier: "Incubator",
-      status: "pending"
-    },
-    {
-      id: "app-3",
-      name: "Solaris Bio",
-      founder: "Dr. Elena Rostova",
-      project: "Generative protein engineering workflow models accelerated via multi-node H100 clusters.",
-      score: 93,
-      tier: "Elite Resident",
-      status: "pending"
-    },
-    {
-      id: "app-4",
-      name: "Crux AI",
-      founder: "Devon Miller",
-      project: "Collaborative developer sandbox layer incorporating dynamic semantic code indexing.",
-      score: 82,
-      tier: "Core Builder",
-      status: "pending"
-    }
-  ]);
+  // Telemetry grid state
+  const [applications, setApplications] = useState<Application[]>([]);
+  const [logs, setLogs] = useState<LogEntry[]>([]);
 
-  // Automated log ticker simulation
-  useEffect(() => {
-    const timer = setInterval(() => {
-      const sources = ["ALGOFORCE_GRID", "SYS_METRICS", "WAITLIST_SVC", "NETWORK_EDGE", "COMPUTE_NODE"];
-      const messages = [
-        "Node telemetry sync complete. All systems nominal.",
-        "GPU temperature normalized to 41.5°C across cluster.",
-        "Pending cohort batch index updated dynamically.",
-        "Waitlist registration pipeline cleared.",
-        "Telemetry latency optimized to 18ms grid-wide."
-      ];
-      const types: Array<"info" | "success" | "warning"> = ["info", "success", "info"];
-      
-      const newLog: LogEntry = {
-        id: Math.random().toString(),
-        timestamp: new Date().toLocaleTimeString("en-US", { hour12: false }),
-        source: sources[Math.floor(Math.random() * sources.length)],
-        message: messages[Math.floor(Math.random() * messages.length)],
-        type: types[Math.floor(Math.random() * types.length)]
-      };
-
-      setLogs(prev => [newLog, ...prev.slice(0, 9)]);
-    }, 8000);
-
-    return () => clearInterval(timer);
-  }, []);
-
+  // Toast trigger
   const triggerToast = (msg: string) => {
     setToastMessage(msg);
     setTimeout(() => {
@@ -133,64 +72,429 @@ export default function AdminDashboard() {
     }, 4000);
   };
 
-  const handleApprove = (id: string, name: string) => {
-    setApplications(prev => prev.map(app => app.id === id ? { ...app, status: "approved" } : app));
-    
-    // Add success log
-    const timestamp = new Date().toLocaleTimeString("en-US", { hour12: false });
-    const log: LogEntry = {
-      id: nextLogId(),
-      timestamp,
-      source: "ADMIN_CONSOLE",
-      message: `Approved '${name}' application into Crucible Ecosystem. Notification sent.`,
-      type: "success"
+  const getAdminFetchHeaders = useCallback(async (activeSession?: Session | null) => {
+    const headers: Record<string, string> = {
+      "Content-Type": "application/json",
     };
-    setLogs(prev => [log, ...prev]);
-    triggerToast(`Application '${name}' Approved!`);
+
+    if (
+      process.env.NODE_ENV !== "production" &&
+      localStorage.getItem("crucible_admin_bypass")
+    ) {
+      headers["x-crucible-dev-bypass"] = "enabled";
+      return headers;
+    }
+
+    const resolvedSession =
+      activeSession ?? session ?? (await supabase.auth.getSession()).data.session;
+
+    if (resolvedSession?.access_token) {
+      headers.Authorization = `Bearer ${resolvedSession.access_token}`;
+    }
+
+    return headers;
+  }, [session]);
+
+  // Load database content
+  const fetchTelemetryData = useCallback(async (activeSession?: Session | null) => {
+    try {
+      const appRes = await fetch("/api/applications", {
+        headers: await getAdminFetchHeaders(activeSession),
+      });
+      const appData = await appRes.json();
+      if (appData.success) {
+        setApplications(appData.data);
+      }
+
+      const logRes = await fetch("/api/logs", {
+        headers: await getAdminFetchHeaders(activeSession),
+      });
+      const logData = await logRes.json();
+      if (logData.success) {
+        setLogs(logData.data);
+      }
+    } catch (err) {
+      console.error("Telemetry fetch error:", err);
+    }
+  }, [getAdminFetchHeaders]);
+
+  const handleAuthSession = useCallback((nextSession: Session | null) => {
+    setSession(nextSession);
+
+    if (nextSession?.user) {
+      const email = nextSession.user.email || "";
+      const authorizedEmailsStr =
+        process.env.NEXT_PUBLIC_AUTHORIZED_ADMIN_EMAILS ||
+        (process.env.NODE_ENV !== "production" ? "developer@nextgen.ai" : "");
+      const allowedEmailsList = authorizedEmailsStr.split(",").map(e => e.trim().toLowerCase());
+
+      if (allowedEmailsList.includes(email.toLowerCase())) {
+        setUser(nextSession.user);
+        setIsAuthorized(true);
+        fetchTelemetryData(nextSession);
+      } else {
+        setUser(nextSession.user);
+        setIsAuthorized(false);
+      }
+    } else {
+      setUser(null);
+      setSession(null);
+      setIsAuthorized(false);
+    }
+    setAuthLoading(false);
+  }, [fetchTelemetryData]);
+
+  // Auth synchronization & Session handling
+  useEffect(() => {
+    let cancelled = false;
+
+    const initializeAuth = async () => {
+      await Promise.resolve();
+
+      if (cancelled) return;
+
+      const localBypass = localStorage.getItem("crucible_admin_bypass");
+      if (localBypass) {
+        setUser({
+          email: "developer@nextgen.ai",
+          user_metadata: { full_name: "Lead Developer" }
+        });
+        setSession(null);
+        setIsAuthorized(true);
+        setAuthLoading(false);
+        fetchTelemetryData(null);
+        return;
+      }
+
+      const { data } = await supabase.auth.getSession();
+      if (!cancelled) {
+        handleAuthSession(data.session);
+      }
+    };
+
+    void initializeAuth();
+
+    const { data: { subscription } } = supabase.auth.onAuthStateChange((_event, nextSession) => {
+      handleAuthSession(nextSession);
+    });
+
+    return () => {
+      cancelled = true;
+      subscription.unsubscribe();
+    };
+  }, [fetchTelemetryData, handleAuthSession]);
+
+  // Login handler
+  const handleGoogleLogin = async () => {
+    setSubmittingAuth(true);
+    try {
+      if (!isSupabaseBrowserConfigured) {
+        triggerToast("Supabase publishable key is not configured yet.");
+        setSubmittingAuth(false);
+        return;
+      }
+
+      const { error } = await supabase.auth.signInWithOAuth({
+        provider: "google",
+        options: {
+          redirectTo: `${window.location.origin}/admin`
+        }
+      });
+      if (error) throw error;
+    } catch (error) {
+      const message = error instanceof Error ? error.message : "Unknown auth error";
+      triggerToast(`Authentication Request Failed: ${message}`);
+      setSubmittingAuth(false);
+    }
   };
 
-  const handleReject = (id: string, name: string) => {
-    setApplications(prev => prev.map(app => app.id === id ? { ...app, status: "rejected" } : app));
-    
-    // Add warning log
-    const timestamp = new Date().toLocaleTimeString("en-US", { hour12: false });
-    const log: LogEntry = {
-      id: nextLogId(),
-      timestamp,
-      source: "ADMIN_CONSOLE",
-      message: `Rejected '${name}' application. Waitlist fallback status assigned.`,
-      type: "warning"
-    };
-    setLogs(prev => [log, ...prev]);
-    triggerToast(`Application '${name}' Waitlisted.`);
+  // Developer bypass bypasses OAuth settings for immediate preview testing
+  const handleSimulateDevMode = () => {
+    setSubmittingAuth(true);
+    setTimeout(() => {
+      localStorage.setItem("crucible_admin_bypass", "enabled");
+      setUser({
+        email: "developer@nextgen.ai",
+        user_metadata: { full_name: "Sandbox Overlord" }
+      });
+      setSession(null);
+      setIsAuthorized(true);
+      setSubmittingAuth(false);
+      fetchTelemetryData();
+      triggerToast("Authorized inside Sandbox Overlord dashboard.");
+    }, 8000);
   };
 
-  const handleBroadcast = (e: React.FormEvent) => {
+  // Logout handler
+  const handleLogout = async () => {
+    localStorage.removeItem("crucible_admin_bypass");
+    await supabase.auth.signOut();
+    setUser(null);
+    setSession(null);
+    setIsAuthorized(false);
+    triggerToast("Admin security tunnel closed.");
+  };
+
+  // Application Approvals
+  const handleApprove = async (id: string, name: string) => {
+    try {
+      const res = await fetch("/api/applications", {
+        method: "PATCH",
+        headers: await getAdminFetchHeaders(),
+        body: JSON.stringify({ id, status: "approved" })
+      });
+      if (res.ok) {
+        setApplications(prev => prev.map(app => app.id === id ? { ...app, status: "approved" } : app));
+        triggerToast(`Application '${name}' Approved!`);
+        fetchTelemetryData(); // Reload logs
+      } else {
+        triggerToast("Server rejected status transition request.");
+      }
+    } catch {
+      triggerToast("Network link timed out.");
+    }
+  };
+
+  const handleReject = async (id: string, name: string) => {
+    try {
+      const res = await fetch("/api/applications", {
+        method: "PATCH",
+        headers: await getAdminFetchHeaders(),
+        body: JSON.stringify({ id, status: "rejected" })
+      });
+      if (res.ok) {
+        setApplications(prev => prev.map(app => app.id === id ? { ...app, status: "rejected" } : app));
+        triggerToast(`Application '${name}' Waitlisted.`);
+        fetchTelemetryData(); // Reload logs
+      } else {
+        triggerToast("Server rejected status transition request.");
+      }
+    } catch {
+      triggerToast("Network link timed out.");
+    }
+  };
+
+  // Broadcast Transmissions
+  const handleBroadcast = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!broadcastSubject || !broadcastContent) {
       triggerToast("Please fill in all broadcast fields.");
       return;
     }
 
-    const timestamp = new Date().toLocaleTimeString("en-US", { hour12: false });
     const targetName = broadcastTarget === "all-founders" ? "All Vetted Founders" : 
                        broadcastTarget === "waitlist" ? "All Waitlisted Applicants" : "AlgoForce Computing Group";
-    
-    const log: LogEntry = {
-      id: nextLogId(),
-      timestamp,
-      source: "BROADCAST_TWR",
-      message: `Cryptographic broadcast '${broadcastSubject}' dispatched to [${targetName}].`,
-      type: "success"
-    };
-    setLogs(prev => [log, ...prev]);
-    triggerToast(`Ecosystem Broadcast Dispatched Successfully!`);
-    
-    // Clear form
-    setBroadcastSubject("");
-    setBroadcastContent("");
+
+    try {
+      const res = await fetch("/api/logs", {
+        method: "POST",
+        headers: await getAdminFetchHeaders(),
+        body: JSON.stringify({
+          source: "BROADCAST_TWR",
+          message: `Cryptographic broadcast '${broadcastSubject}' dispatched to [${targetName}].`,
+          type: "success"
+        })
+      });
+      if (res.ok) {
+        triggerToast(`Ecosystem Broadcast Dispatched Successfully!`);
+        setBroadcastSubject("");
+        setBroadcastContent("");
+        fetchTelemetryData(); // Reload logs
+      } else {
+        triggerToast("Failed to dispatch ecosystem broadcast.");
+      }
+    } catch {
+      triggerToast("Broadcast network offline.");
+    }
   };
 
+  // Telemetry node sharding optimizer simulation
+  const handleNodeShardOptimize = async () => {
+    try {
+      await fetch("/api/logs", {
+        method: "POST",
+        headers: await getAdminFetchHeaders(),
+        body: JSON.stringify({
+          source: "SYS_METRICS",
+          message: "Manual compute allocation optimizer completed. Telemetry latency locked at 14ms.",
+          type: "info"
+        })
+      });
+      triggerToast("Compute grid optimized. Shards re-balanced.");
+      fetchTelemetryData();
+    } catch {
+      triggerToast("Failed to optimization dispatch.");
+    }
+  };
+
+  // Ticker simulation for background alerts if connected
+  useEffect(() => {
+    if (!isAuthorized) return;
+
+    const timer = setInterval(async () => {
+      const sources = ["ALGOFORCE_GRID", "SYS_METRICS", "NETWORK_EDGE", "COMPUTE_NODE"];
+      const messages = [
+        "Node telemetry sync complete. All systems nominal.",
+        "GPU temperature normalized to 41.5°C across cluster.",
+        "Pending cohort batch index updated dynamically.",
+        "Telemetry latency optimized to 18ms grid-wide."
+      ];
+      const types: Array<LogEntry["type"]> = ["info", "success", "info"];
+
+      const source = sources[Math.floor(Math.random() * sources.length)];
+      const message = messages[Math.floor(Math.random() * messages.length)];
+      const type = types[Math.floor(Math.random() * types.length)];
+
+      fetch("/api/logs", {
+        method: "POST",
+        headers: await getAdminFetchHeaders(),
+        body: JSON.stringify({ source, message, type })
+      }).then(() => {
+        fetchTelemetryData();
+      }).catch(() => {});
+
+    }, 20000); // Trigger slower interval to reduce network requests in sandboxes
+
+    return () => clearInterval(timer);
+  }, [fetchTelemetryData, getAdminFetchHeaders, isAuthorized]);
+
+  // Loading phase rendering
+  if (authLoading) {
+    return (
+      <div className="min-h-screen flex flex-col justify-center items-center tech-grid-bg bg-crucible-bg text-crucible-navy">
+        <Navbar />
+        <div className="flex flex-col items-center gap-4">
+          <Activity className="w-12 h-12 text-crucible-amber animate-spin" />
+          <span className="font-mono text-xs font-bold tracking-widest uppercase opacity-75">
+            Synchronizing admin telemetry tunnels...
+          </span>
+        </div>
+        <Footer />
+      </div>
+    );
+  }
+
+  // Login Gate Rendering
+  if (!user) {
+    return (
+      <div className="min-h-screen flex flex-col tech-grid-bg bg-crucible-bg">
+        <Navbar />
+        <main className="flex-grow pt-32 pb-24 px-6 md:px-8 max-w-md mx-auto w-full z-10 relative flex flex-col justify-center">
+          <div className="absolute top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 w-[450px] h-[450px] glow-amber-radial opacity-60 pointer-events-none" />
+
+          <div className="p-8 md:p-12 rounded-3xl bg-white border border-crucible-navy/5 shadow-sm relative overflow-hidden z-10 text-center">
+            <div className="absolute -top-12 -right-12 w-48 h-48 glow-amber-radial opacity-40 pointer-events-none" />
+
+            <div className="flex justify-center mb-6">
+              <div className="w-16 h-16 rounded-2xl bg-crucible-bg/80 border border-crucible-navy/5 flex items-center justify-center text-crucible-amber relative">
+                <Lock className="w-6 h-6 animate-pulse" />
+                <div className="absolute inset-0 rounded-2xl border border-crucible-amber/20 animate-ping opacity-35" />
+              </div>
+            </div>
+
+            <span className="text-[10px] font-mono font-bold tracking-widest text-crucible-amber uppercase block mb-1">
+              SECURE PORTAL ACCESS REQUIRED
+            </span>
+            <h2 className="text-2xl md:text-3xl font-mono font-black text-crucible-navy uppercase tracking-tight leading-none mb-4">
+              Crucible Core.
+            </h2>
+            <p className="text-xxs font-semibold text-crucible-slate mb-8 leading-relaxed max-w-xs mx-auto">
+              Please authenticate with Google to access the AlgoForce telemetry control dashboard, review cohorts, and dispatch server broadcasts.
+            </p>
+
+            <div className="flex flex-col gap-3">
+              <button
+                onClick={handleGoogleLogin}
+                disabled={submittingAuth}
+                className="w-full py-3.5 rounded-xl border border-crucible-navy/10 bg-white hover:bg-crucible-bg text-crucible-navy text-xs font-mono font-bold uppercase tracking-wider flex items-center justify-center gap-3 transition-all cursor-pointer shadow-sm disabled:opacity-50"
+              >
+                {/* Google Logo Icon SVG */}
+                <svg className="w-4 h-4" viewBox="0 0 24 24">
+                  <path
+                    fill="#EA4335"
+                    d="M12 5.04c1.65 0 3.12.57 4.29 1.69l3.21-3.21C17.55 1.64 14.97 1 12 1 7.24 1 3.23 3.73 1.34 7.74l3.85 2.99C6.1 7.64 8.84 5.04 12 5.04z"
+                  />
+                  <path
+                    fill="#4285F4"
+                    d="M23.49 12.27c0-.81-.07-1.59-.2-2.35H12v4.51h6.44c-.28 1.48-1.12 2.73-2.38 3.58l3.7 2.87c2.16-1.99 3.43-4.92 3.43-8.61z"
+                  />
+                  <path
+                    fill="#FBBC05"
+                    d="M5.19 14.22c-.24-.74-.38-1.54-.38-2.37s.14-1.63.38-2.37L1.34 6.49C.49 8.19 0 10.04 0 12s.49 3.81 1.34 5.51l3.85-3.29z"
+                  />
+                  <path
+                    fill="#34A853"
+                    d="M12 23c3.24 0 5.96-1.07 7.96-2.92l-3.7-2.87c-1.03.69-2.34 1.1-4.26 1.1-3.16 0-5.9-2.6-6.81-5.69L1.34 15.9C3.23 19.91 7.24 23 12 23z"
+                  />
+                </svg>
+                <span>{submittingAuth ? "Connecting Flow..." : "Sign In with Google"}</span>
+              </button>
+
+              <div className="relative my-3 flex items-center justify-center">
+                <div className="absolute w-full h-[1px] bg-crucible-navy/5" />
+                <span className="relative px-3 bg-white font-mono text-[8px] font-bold text-crucible-slate/50 uppercase">
+                  LOCAL SANDBOX
+                </span>
+              </div>
+
+              <button
+                onClick={handleSimulateDevMode}
+                disabled={submittingAuth}
+                className="w-full py-3 rounded-xl border border-crucible-amber bg-crucible-amber hover:bg-crucible-navy text-white text-xs font-mono font-bold uppercase tracking-wider flex items-center justify-center gap-2 transition-all cursor-pointer shadow-md disabled:opacity-50"
+              >
+                <Zap className="w-3.5 h-3.5" />
+                <span>{submittingAuth ? "Booting Grid..." : "Simulate Dev Mode (Bypass)"}</span>
+              </button>
+            </div>
+          </div>
+        </main>
+        <Footer />
+      </div>
+    );
+  }
+
+  // Unauthorized Account Gate
+  if (!isAuthorized) {
+    return (
+      <div className="min-h-screen flex flex-col tech-grid-bg bg-crucible-bg">
+        <Navbar />
+        <main className="flex-grow pt-32 pb-24 px-6 md:px-8 max-w-md mx-auto w-full z-10 relative flex flex-col justify-center">
+          <div className="absolute top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 w-[400px] h-[400px] glow-amber-radial opacity-60 pointer-events-none" />
+
+          <div className="p-8 md:p-12 rounded-3xl bg-white border border-red-500/10 shadow-sm relative overflow-hidden z-10 text-center">
+            <div className="flex justify-center mb-6">
+              <div className="w-16 h-16 rounded-2xl bg-red-50 border border-red-100 flex items-center justify-center text-red-500">
+                <AlertTriangle className="w-6 h-6 animate-bounce" />
+              </div>
+            </div>
+
+            <span className="text-[10px] font-mono font-bold tracking-widest text-red-500 uppercase block mb-1">
+              ACCESS DECREED DENIED
+            </span>
+            <h2 className="text-2xl font-mono font-black text-crucible-navy uppercase tracking-tight leading-none mb-4">
+              Restricted Portal.
+            </h2>
+            <p className="text-xxs font-semibold text-crucible-slate mb-8 leading-relaxed max-w-xs mx-auto">
+              Your account (**{user.email || "unknown account"}**) has authenticated successfully, but does not possess administrator clearance credentials. Please request key access permissions.
+            </p>
+
+            <div className="flex flex-col gap-3">
+              <button
+                onClick={handleLogout}
+                className="w-full py-3.5 rounded-xl border border-crucible-navy bg-crucible-navy hover:bg-crucible-amber hover:border-crucible-amber text-white text-xs font-mono font-bold uppercase tracking-wider flex items-center justify-center gap-2 transition-all cursor-pointer"
+              >
+                <LogOut className="w-3.5 h-3.5" />
+                <span>Disconnect Account</span>
+              </button>
+            </div>
+          </div>
+        </main>
+        <Footer />
+      </div>
+    );
+  }
+
+  // Authorized Admin Portal Rendering
   return (
     <div className="min-h-screen flex flex-col tech-grid-bg bg-crucible-bg">
       <Navbar />
@@ -227,7 +531,7 @@ export default function AdminDashboard() {
             >
               <span className="w-1.5 h-1.5 rounded-full bg-crucible-amber animate-ping" />
               <span className="font-mono text-[9px] font-bold tracking-widest text-crucible-navy/70 uppercase">
-                ADMIN SECURE TUNNEL // OVERLORD
+                ADMIN SECURE TUNNEL // {(user.email || "admin").toUpperCase()}
               </span>
             </motion.div>
 
@@ -246,13 +550,23 @@ export default function AdminDashboard() {
             initial={{ opacity: 0, x: 20 }}
             animate={{ opacity: 1, x: 0 }}
             transition={{ duration: 0.6, delay: 0.2 }}
-            className="flex items-center gap-3 font-mono text-[10px] text-crucible-slate bg-white px-5 py-3.5 rounded-2xl border border-crucible-navy/5 shadow-sm"
+            className="flex items-center gap-5 bg-white px-5 py-3.5 rounded-2xl border border-crucible-navy/5 shadow-sm"
           >
-            <Activity className="w-4 h-4 text-crucible-amber animate-pulse" />
-            <div className="flex flex-col">
-              <span className="font-bold text-crucible-navy uppercase">GRID CONNECTION STABLE</span>
-              <span>LATENCY: 14ms // PKT DROP: 0.00%</span>
+            <div className="flex items-center gap-3 font-mono text-[10px] text-crucible-slate border-r border-crucible-navy/5 pr-4">
+              <Activity className="w-4 h-4 text-crucible-amber animate-pulse" />
+              <div className="flex flex-col">
+                <span className="font-bold text-crucible-navy uppercase">GRID CONNECTION SECURE</span>
+                <span>LATENCY: 14ms // DB LINK: SUPABASE</span>
+              </div>
             </div>
+
+            <button
+              onClick={handleLogout}
+              className="px-3.5 py-2 rounded-xl border border-red-500/10 hover:border-red-500 hover:bg-red-50 text-red-500 transition-all font-mono text-[9px] font-bold uppercase tracking-wider flex items-center gap-1.5 cursor-pointer"
+            >
+              <LogOut className="w-3 h-3" />
+              <span>Disconnect</span>
+            </button>
           </motion.div>
         </div>
 
@@ -260,7 +574,7 @@ export default function AdminDashboard() {
         <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-6">
           {[
             { label: "Active Cohort Founders", val: "142", sub: "Vetted Builders", icon: Users },
-            { label: "Total Applications", val: "1,849", sub: "+24 in last 24h", icon: TrendingUp },
+            { label: "Total Applications", val: applications.length.toString(), sub: `Pending Review: ${applications.filter(app => app.status === "pending").length}`, icon: TrendingUp },
             { label: "H100 Active Clusters", val: "28 / 32 Nodes", sub: "AlgoForce Shared GPU", icon: Cpu },
             { label: "Ecosystem Telemetry Pool", val: "94.8%", sub: "Nominal Load Rating", icon: Server }
           ].map((stat, idx) => {
@@ -396,16 +710,18 @@ export default function AdminDashboard() {
                         <Terminal className="w-4 h-4 text-crucible-amber" />
                         <span className="font-bold uppercase tracking-wider text-white">Ecosystem Diagnostics Matrix</span>
                       </div>
-                      <span className="text-crucible-amber text-[9px] font-bold px-2 py-0.5 rounded-full bg-crucible-amber/15 border border-crucible-amber/25">SECURE CONNECTION</span>
+                      <span className="text-crucible-amber text-[9px] font-bold px-2 py-0.5 rounded-full bg-crucible-amber/15 border border-crucible-amber/25 uppercase">SECURE SHELL</span>
                     </div>
                     <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
                       <div>
-                        <span className="text-white/50 block">PARENT NODES:</span>
-                        <span className="font-bold text-white uppercase">AlgoForce Core Grid</span>
+                        <span className="text-white/50 block">AUTHENTICATED AS:</span>
+                        <span className="font-bold text-white uppercase truncate block max-w-[200px]" title={user.email || "admin"}>
+                          {user.email || "admin"}
+                        </span>
                       </div>
                       <div>
                         <span className="text-white/50 block">VAULT STORAGE:</span>
-                        <span className="font-bold text-white uppercase">AES-256 ENCRYPTED</span>
+                        <span className="font-bold text-white uppercase">SUPABASE DATABASE (SSL)</span>
                       </div>
                       <div>
                         <span className="text-white/50 block">COHORT DURATION:</span>
@@ -574,7 +890,7 @@ export default function AdminDashboard() {
                       </div>
 
                       <button
-                        onClick={() => triggerToast("Compute grid optimized. Shards re-balanced.")}
+                        onClick={handleNodeShardOptimize}
                         className="w-full py-3 mt-6 rounded-xl border border-crucible-navy bg-crucible-navy text-white text-[10px] font-mono font-bold tracking-widest uppercase hover:bg-transparent hover:text-crucible-navy transition-all duration-300 cursor-pointer"
                       >
                         Optimize Node Shards
@@ -619,6 +935,7 @@ export default function AdminDashboard() {
                         <label className="font-mono text-[10px] font-bold text-crucible-navy uppercase">Broadcast Subject</label>
                         <input
                           type="text"
+                          required
                           placeholder="e.g. Crucible Incubation Cohort 05 Application Deadlines"
                           value={broadcastSubject}
                           onChange={(e) => setBroadcastSubject(e.target.value)}
@@ -631,6 +948,7 @@ export default function AdminDashboard() {
                       <label className="font-mono text-[10px] font-bold text-crucible-navy uppercase">Telemetry Body Content</label>
                       <textarea
                         rows={6}
+                        required
                         placeholder="Write cohort notifications or news here... (Accepts standard plaintext message)"
                         value={broadcastContent}
                         onChange={(e) => setBroadcastContent(e.target.value)}
@@ -690,10 +1008,10 @@ export default function AdminDashboard() {
             </div>
 
             <div className="border-t border-crucible-navy/5 pt-4 mt-4 flex items-center justify-between font-mono text-[8px] text-crucible-slate/60 font-bold">
-              <span>ACTIVE SESSION: 04h 32m</span>
+              <span>ACTIVE SESSION: SYNCED</span>
               <span className="flex items-center gap-1">
                 <span className="w-1.5 h-1.5 rounded-full bg-crucible-amber animate-ping" />
-                SYNCED WITH CLOUD
+                DATABASE SYNC NOMINAL
               </span>
             </div>
           </div>
