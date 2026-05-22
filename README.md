@@ -24,16 +24,18 @@ Copy `.env.example` to `.env.local` and fill in the Supabase publishable key plu
 
 ```bash
 NEXT_PUBLIC_SUPABASE_URL=https://rwbdlpkohczykgklmqyc.supabase.co
-NEXT_PUBLIC_SUPABASE_ANON_KEY=your-supabase-publishable-key
+NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY=your-supabase-publishable-key
 SUPABASE_SERVICE_ROLE_KEY=your-server-only-service-role-key
 ```
 
-Create the database by running `supabase/migrations/20260522000000_crucible_core_schema.sql` in the Supabase SQL editor, or with the Supabase CLI after linking the project:
+Create or repair the database by running every SQL file in `supabase/migrations/` in timestamp order in the Supabase SQL editor, or with the Supabase CLI after linking the project:
 
 ```bash
 npx supabase link --project-ref rwbdlpkohczykgklmqyc
 npx supabase db push
 ```
+
+The repair migration also notifies PostgREST to reload its schema cache, which clears errors such as missing `applications.founder` after the column is added.
 
 Optional demo data lives in `supabase/seed.sql`.
 
