@@ -57,9 +57,8 @@ interface AccessCode {
 
 interface AccessCodeCreatePayload {
   label: string;
-  assignedEmail?: string;
+  assignedEmail: string;
   tier: string;
-  maxRedemptions: number;
   expiresAt?: string | null;
   notes?: string | null;
 }
@@ -96,7 +95,6 @@ export default function AdminDashboard() {
     label: "",
     assignedEmail: "",
     tier: "Builder",
-    maxRedemptions: "1",
     expiresAt: "",
     notes: "",
   });
@@ -324,9 +322,8 @@ export default function AdminDashboard() {
     try {
       const created = await requestAccessCode({
         label: accessCodeForm.label.trim() || "Crucible access grant",
-        assignedEmail: accessCodeForm.assignedEmail.trim().toLowerCase() || undefined,
+        assignedEmail: accessCodeForm.assignedEmail.trim().toLowerCase(),
         tier: accessCodeForm.tier,
-        maxRedemptions: Number(accessCodeForm.maxRedemptions) || 1,
         expiresAt: accessCodeForm.expiresAt || null,
         notes: accessCodeForm.notes.trim() || null,
       });
@@ -336,7 +333,6 @@ export default function AdminDashboard() {
           label: "",
           assignedEmail: "",
           tier: "Builder",
-          maxRedemptions: "1",
           expiresAt: "",
           notes: "",
         });
@@ -403,9 +399,8 @@ export default function AdminDashboard() {
           await requestAccessCode(
             {
               label: `${application.name} founder access`,
-              assignedEmail: application.email,
+              assignedEmail: application.email || "",
               tier: application.tier,
-              maxRedemptions: 1,
               notes: `Generated after approving application ${application.id}.`,
             },
             `Application '${name}' approved and access code generated.`
@@ -1064,10 +1059,11 @@ export default function AdminDashboard() {
 
                       <div className="flex flex-col gap-2">
                         <label className="font-mono text-[10px] font-bold text-crucible-navy uppercase">
-                          Assigned Email
+                          User Email
                         </label>
                         <input
                           type="email"
+                          required
                           placeholder="founder@company.ai"
                           value={accessCodeForm.assignedEmail}
                           onChange={(event) =>
@@ -1104,24 +1100,14 @@ export default function AdminDashboard() {
                         </select>
                       </div>
 
-                      <div className="grid grid-cols-2 gap-4">
-                        <div className="flex flex-col gap-2">
-                          <label className="font-mono text-[10px] font-bold text-crucible-navy uppercase">
-                            Uses
-                          </label>
-                          <input
-                            type="number"
-                            min={1}
-                            max={500}
-                            value={accessCodeForm.maxRedemptions}
-                            onChange={(event) =>
-                              setAccessCodeForm({
-                                ...accessCodeForm,
-                                maxRedemptions: event.target.value,
-                              })
-                            }
-                            className="p-3 rounded-xl border border-crucible-navy/10 bg-white text-xxs font-mono font-bold focus:outline-none focus:border-crucible-amber"
-                          />
+                      <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                        <div className="p-3 rounded-xl border border-crucible-navy/10 bg-white flex flex-col justify-center">
+                          <span className="font-mono text-[10px] font-bold text-crucible-navy uppercase">
+                            Redemption Limit
+                          </span>
+                          <span className="text-[10px] font-semibold text-crucible-slate mt-1">
+                            One code, one user, one redemption
+                          </span>
                         </div>
 
                         <div className="flex flex-col gap-2">
@@ -1199,7 +1185,7 @@ export default function AdminDashboard() {
                             </span>
                           </div>
                           <p className="text-[10px] font-semibold text-crucible-slate leading-relaxed">
-                            {`${code.assigned_email || "Open email claim"} // ${code.tier} // ${code.redemption_count}/${code.max_redemptions} redeemed${
+                            {`${code.assigned_email || "Unassigned legacy code"} // ${code.tier} // ${code.redemption_count}/1 redeemed${
                               code.expires_at
                                 ? ` // Expires ${new Date(code.expires_at).toLocaleDateString()}`
                                 : ""
@@ -1216,7 +1202,8 @@ export default function AdminDashboard() {
                               Revoke
                             </button>
                           ) : code.status === "revoked" &&
-                            code.redemption_count < code.max_redemptions ? (
+                            code.redemption_count < 1 &&
+                            code.assigned_email ? (
                             <button
                               onClick={() => handleAccessCodeStatus(code.id, "active")}
                               className="px-3 py-2 rounded-xl border border-crucible-amber/20 bg-crucible-amber/10 hover:bg-crucible-amber hover:text-white text-crucible-amber text-[9px] font-mono font-bold uppercase transition-all cursor-pointer"

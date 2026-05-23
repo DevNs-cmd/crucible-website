@@ -39,16 +39,6 @@ function parseStatus(value: unknown) {
     : null;
 }
 
-function parseMaxRedemptions(value: unknown) {
-  const parsed = Number(value);
-
-  if (!Number.isInteger(parsed) || parsed < 1 || parsed > 500) {
-    return 1;
-  }
-
-  return parsed;
-}
-
 function parseExpiresAt(value: unknown) {
   const raw = cleanString(value);
 
@@ -157,16 +147,13 @@ export async function POST(request: Request) {
     const assignedEmail = cleanEmail(body.assignedEmail ?? body.assigned_email);
     const label = cleanString(body.label) || "Crucible access grant";
     const tier = parseAccessTier(body.tier);
-    const maxRedemptions = parseMaxRedemptions(
-      body.maxRedemptions ?? body.max_redemptions
-    );
     const notes = cleanString(body.notes) || null;
     const expiresAt = parseExpiresAt(body.expiresAt ?? body.expires_at);
     const customCode = normalizeCustomCode(body.code);
 
-    if (assignedEmail && !isValidEmail(assignedEmail)) {
+    if (!assignedEmail || !isValidEmail(assignedEmail)) {
       return NextResponse.json(
-        { error: "Assigned email must be a valid email address." },
+        { error: "Every access code must be assigned to one valid user email." },
         { status: 400 }
       );
     }
@@ -199,9 +186,9 @@ export async function POST(request: Request) {
             code_hash: hashAccessCode(rawCode),
             code_hint: getSecretHint(rawCode),
             label,
-            assigned_email: assignedEmail || null,
+            assigned_email: assignedEmail,
             tier,
-            max_redemptions: maxRedemptions,
+            max_redemptions: 1,
             expires_at: expiresAt,
             created_by: admin.email,
             notes,
@@ -249,7 +236,7 @@ export async function POST(request: Request) {
     await supabase.from("logs").insert([
       {
         source: "ACCESS_VAULT",
-        message: `Access code created for ${assignedEmail || label} (${tier}).`,
+        message: `Single-use access code created for ${assignedEmail} (${tier}).`,
         type: "success",
       },
     ]);
