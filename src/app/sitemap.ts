@@ -14,6 +14,7 @@ const routes = [
   { path: "/startups", priority: 0.8 },
   { path: "/ailabs", priority: 0.85 },
   { path: "/membership", priority: 0.85 },
+  { path: "/access", priority: 0.9 },
   { path: "/apply", priority: 0.9 },
   { path: "/waitlist", priority: 0.75 },
   { path: "/blog", priority: 0.7 },

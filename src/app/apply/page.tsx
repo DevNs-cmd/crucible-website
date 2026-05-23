@@ -8,13 +8,32 @@ import { ArrowRight, CheckCircle2 } from "lucide-react";
 
 export default function Apply() {
   const [submitted, setSubmitted] = useState(false);
-  const [formData, setFormData] = useState({ name: "", email: "", links: "", description: "" });
+  const [formData, setFormData] = useState({
+    founderName: "",
+    startupName: "",
+    email: "",
+    links: "",
+    description: "",
+  });
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (!formData.name || !formData.email) return;
+    const founderName = formData.founderName.trim();
+    const startupName = formData.startupName.trim();
+    const email = formData.email.trim().toLowerCase();
+    const project = formData.description.trim();
+
+    if (!founderName || !startupName || !email || !project) {
+      setError("Founder name, startup name, email, and project brief are required.");
+      return;
+    }
+
+    if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) {
+      setError("Enter a valid email address.");
+      return;
+    }
 
     setLoading(true);
     setError(null);
@@ -26,17 +45,24 @@ export default function Apply() {
           "Content-Type": "application/json",
         },
         body: JSON.stringify({
-          name: formData.name,
-          founder: formData.name,
-          email: formData.email,
-          links: formData.links,
-          project: formData.description,
+          name: startupName,
+          startup_name: startupName,
+          founder: founderName,
+          founder_name: founderName,
+          email,
+          links: formData.links.trim(),
+          project,
           tier: "Core Builder",
         }),
       });
-      const data = await response.json();
+      const data = (await response.json().catch(() => ({}))) as {
+        error?: string;
+        mocked?: boolean;
+        persisted?: boolean;
+        success?: boolean;
+      };
 
-      if (response.ok) {
+      if (response.ok && data.success && data.persisted && !data.mocked) {
         setSubmitted(true);
       } else {
         setError(data.error || "Failed to submit application. Please try again.");
@@ -84,8 +110,22 @@ export default function Apply() {
                   required
                   disabled={loading}
                   placeholder="Hedy Lamarr"
-                  value={formData.name}
-                  onChange={(e) => setFormData({ ...formData, name: e.target.value })}
+                  value={formData.founderName}
+                  onChange={(e) => setFormData({ ...formData, founderName: e.target.value })}
+                  className="w-full bg-crucible-bg/60 border border-crucible-navy/10 rounded-xl px-4 py-3 text-xs font-mono placeholder:text-crucible-navy/35 focus:outline-none focus:border-crucible-amber focus:bg-white transition-all text-crucible-navy disabled:opacity-55"
+                />
+              </div>
+
+              {/* Startup */}
+              <div className="flex flex-col gap-2">
+                <label className="text-xs font-mono font-bold text-crucible-navy/60 uppercase">Startup / Project Name</label>
+                <input
+                  type="text"
+                  required
+                  disabled={loading}
+                  placeholder="ForgeNet Labs"
+                  value={formData.startupName}
+                  onChange={(e) => setFormData({ ...formData, startupName: e.target.value })}
                   className="w-full bg-crucible-bg/60 border border-crucible-navy/10 rounded-xl px-4 py-3 text-xs font-mono placeholder:text-crucible-navy/35 focus:outline-none focus:border-crucible-amber focus:bg-white transition-all text-crucible-navy disabled:opacity-55"
                 />
               </div>
@@ -122,6 +162,7 @@ export default function Apply() {
                 <label className="text-xs font-mono font-bold text-crucible-navy/60 uppercase">What are you forging?</label>
                 <textarea
                   rows={4}
+                  required
                   disabled={loading}
                   placeholder="Description of your AI product, agent, or technology node..."
                   value={formData.description}
@@ -150,7 +191,7 @@ export default function Apply() {
               <div>
                 <h3 className="text-2xl font-mono font-black text-crucible-navy uppercase tracking-tight">Application Lodged.</h3>
                 <p className="text-xs font-semibold text-crucible-slate mt-3 leading-relaxed max-w-sm">
-                  Thank you, **{formData.name}**. Your operational telemetry has been syndicated. The AlgoForce AI board will review your profile and chapter invite within 48 hours.
+                  Thank you, **{formData.founderName}**. Your operational telemetry has been syndicated. The AlgoForce AI board will review your profile and chapter invite within 48 hours.
                 </p>
               </div>
             </motion.div>

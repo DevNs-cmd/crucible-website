@@ -2,8 +2,12 @@ import { NextResponse } from "next/server";
 import { requireAdmin } from "@/lib/adminAuth";
 import {
   getSupabaseAdminClient,
+  getSupabaseConfigDiagnostics,
   getSupabaseWriteClient,
 } from "@/lib/supabaseServer";
+
+export const dynamic = "force-dynamic";
+export const runtime = "nodejs";
 
 type ApplicationTier = "Elite Resident" | "Incubator" | "Core Builder";
 type ApplicationStatus = "pending" | "approved" | "rejected";
@@ -20,7 +24,22 @@ interface Application {
   status: ApplicationStatus;
 }
 
-let fallbackApplications: Application[] = [
+interface ApplicationInsertPayload {
+  founder_name: string;
+  startup_name: string;
+  email: string;
+  stage: string | null;
+  fit_score: number;
+  status: ApplicationStatus;
+  name: string;
+  founder: string;
+  links: string | null;
+  project: string;
+  score: number;
+  tier: ApplicationTier;
+}
+
+const fallbackApplications: Application[] = [
   {
     id: "app-1",
     name: "Nexus Labs",
@@ -75,6 +94,21 @@ function cleanEmail(value: unknown) {
   return cleanString(value).toLowerCase();
 }
 
+function firstString(
+  body: Record<string, unknown>,
+  keys: string[]
+) {
+  for (const key of keys) {
+    const value = cleanString(body[key]);
+
+    if (value) {
+      return value;
+    }
+  }
+
+  return "";
+}
+
 function isEmail(value: string) {
   return /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(value);
 }
@@ -127,6 +161,14 @@ function getErrorMessage(error: unknown) {
   return error instanceof Error ? error.message : "Unexpected server error";
 }
 
+function logStackTrace(label: string, error: unknown) {
+  console.error(label, error);
+
+  if (error instanceof Error && error.stack) {
+    console.error(`${label} STACK:`, error.stack);
+  }
+}
+
 export async function GET(request: Request) {
   const admin = await requireAdmin(request);
 
@@ -165,79 +207,140 @@ export async function GET(request: Request) {
 
 export async function POST(request: Request) {
   try {
-    const body = await request.json();
-    const name = cleanString(body.name);
-    const founder = cleanString(body.founder) || name;
+    const body = (await request.json()) as Record<string, unknown>;
+    console.info("APPLICATION REQUEST BODY:", body);
+
+    const startupName = firstString(body, [
+      "name",
+      "startup_name",
+      "startupName",
+    ]);
+    const founder = firstString(body, [
+      "founder",
+      "founder_name",
+      "founderName",
+      "fullName",
+      "name",
+    ]);
     const email = cleanEmail(body.email);
     const links = cleanString(body.links);
-    const project =
-      cleanString(body.project) ||
-      cleanString(body.description) ||
-      "Application submitted without a project brief.";
+    const projectBrief = firstString(body, ["project", "description"]);
+    const project = projectBrief || startupName;
+    const stage = cleanString(body.stage) || null;
     const tier = parseTier(body.tier);
+    const missingFields = [];
 
-    if (!name || !email || !isEmail(email)) {
+    if (!startupName) {
+      missingFields.push("name or startup_name");
+    }
+
+    if (!founder) {
+      missingFields.push("founder or founder_name");
+    }
+
+    if (!email) {
+      missingFields.push("email");
+    }
+
+    if (!project) {
+      missingFields.push("project, description, name, or startup_name");
+    }
+
+    if (missingFields.length > 0) {
       return NextResponse.json(
-        { error: "Name and a valid email are required" },
+        {
+          error: "Missing required application fields",
+          missingFields,
+        },
         { status: 400 }
       );
     }
 
-    const score = calculateFitScore(name, project, links);
-    const fallbackApplication: Application = {
-      id: `app-${Date.now()}`,
-      name,
-      founder,
-      email,
-      links,
-      project,
-      score,
-      tier,
-      status: "pending",
-    };
+    if (!isEmail(email)) {
+      return NextResponse.json(
+        { error: "A valid email is required" },
+        { status: 400 }
+      );
+    }
 
+    const score = calculateFitScore(startupName, project, links);
     const supabase = getSupabaseWriteClient();
 
     if (!supabase) {
-      fallbackApplications = [fallbackApplication, ...fallbackApplications];
-      return NextResponse.json({
-        success: true,
-        mocked: true,
-        data: fallbackApplication,
-      });
+      const diagnostics = getSupabaseConfigDiagnostics();
+      console.error("SUPABASE CONFIG ERROR:", diagnostics);
+
+      return NextResponse.json(
+        {
+          error: "Supabase write client is not configured",
+          details: diagnostics,
+        },
+        { status: 500 }
+      );
     }
+
+    const insertPayload: ApplicationInsertPayload = {
+      founder_name: founder,
+      startup_name: startupName,
+      email,
+      stage,
+      fit_score: score,
+      status: "pending",
+      name: startupName,
+      founder,
+      links: links || null,
+      project,
+      score,
+      tier,
+    };
+
+    console.info("APPLICATION INSERT PAYLOAD:", insertPayload);
 
     const { data, error } = await supabase
       .from("applications")
-      .insert([
-        {
-          name,
-          founder,
-          email,
-          links: links || null,
-          project,
-          score,
-          tier,
-          status: "pending",
-        },
-      ])
-      .select("id,name,founder,email,links,project,score,tier,status,created_at")
-      .single();
+      .insert([insertPayload]);
+
+    console.info("SUPABASE APPLICATION INSERT RESPONSE:", {
+      data,
+      error,
+    });
 
     if (error) {
-      return NextResponse.json({ error: error.message }, { status: 500 });
+      console.error("SUPABASE INSERT ERROR:", error);
+      return NextResponse.json(
+        { error: error.message, details: error },
+        { status: 500 }
+      );
     }
 
-    await supabase.from("logs").insert([
+    const { error: logError } = await supabase.from("logs").insert([
       {
         source: "WAITLIST_SVC",
-        message: `New startup application received: ${name} (Score: ${score}/100)`,
+        message: `New startup application received: ${startupName} (Score: ${score}/100)`,
         type: "success",
       },
     ]);
 
-    return NextResponse.json({ success: true, data });
+    if (logError) {
+      console.error("SUPABASE LOG INSERT ERROR:", logError);
+    }
+
+    return NextResponse.json({
+      success: true,
+      persisted: true,
+      data: {
+        name: startupName,
+        founder,
+        email,
+        links,
+        project,
+        score,
+        tier,
+        status: "pending",
+      },
+    });
   } catch (error) {
+    logStackTrace("APPLICATION POST ERROR:", error);
     return NextResponse.json(
       { error: getErrorMessage(error) },
       { status: 500 }

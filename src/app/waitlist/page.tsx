@@ -14,7 +14,17 @@ export default function Waitlist() {
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (!email) return;
+    const normalizedEmail = email.trim().toLowerCase();
+
+    if (!normalizedEmail) {
+      setError("Email is required.");
+      return;
+    }
+
+    if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(normalizedEmail)) {
+      setError("Enter a valid email address.");
+      return;
+    }
 
     setLoading(true);
     setError(null);
@@ -24,10 +34,23 @@ export default function Waitlist() {
         headers: {
           "Content-Type": "application/json",
         },
-        body: JSON.stringify({ email }),
+        body: JSON.stringify({ email: normalizedEmail }),
       });
-      const data = await response.json();
-      if (response.ok) {
+      const data = (await response.json().catch(() => ({}))) as {
+        duplicate?: boolean;
+        error?: string;
+        mocked?: boolean;
+        persisted?: boolean;
+        success?: boolean;
+      };
+
+      if (
+        response.ok &&
+        data.success &&
+        !data.mocked &&
+        (data.persisted || data.duplicate)
+      ) {
+        setEmail(normalizedEmail);
         setSubmitted(true);
       } else {
         setError(data.error || "Failed to register. Please try again.");

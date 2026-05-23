@@ -70,7 +70,7 @@ export default function EcosystemPage() {
               Our builders are located across major technology nodes worldwide: Silicon Valley, London, Bengaluru, and Tokyo. Explore local community chapters, physical hubs, and collaborative co-working partners.
             </p>
             <Link
-              href="/apply"
+              href="/access"
               className="inline-flex items-center gap-1.5 text-xs font-mono font-bold text-crucible-amber hover:text-crucible-navy uppercase transition-colors"
             >
               <span>Apply for local access</span>

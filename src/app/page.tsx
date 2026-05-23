@@ -413,7 +413,7 @@ export default function Home() {
 
                     <div className="mt-8">
                       <Link
-                        href="/apply"
+                        href="/access"
                         className={`w-full py-3.5 rounded-xl text-center text-[10px] font-mono font-bold tracking-widest uppercase flex items-center justify-center gap-1.5 transition-all ${
                           isActive
                             ? "bg-crucible-navy text-white hover:bg-crucible-amber shadow-sm"

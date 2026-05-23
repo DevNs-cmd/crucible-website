@@ -18,22 +18,50 @@ import {
   HardDrive, 
   Zap, 
   TrendingUp, 
-  Server,
   Lock,
   LogOut,
-  AlertTriangle
+  AlertTriangle,
+  Copy,
+  KeyRound,
+  Plus
 } from "lucide-react";
 
-type AdminTab = "analytics" | "applications" | "compute" | "broadcast";
+type AdminTab = "analytics" | "applications" | "access" | "compute" | "broadcast";
 
 interface Application {
   id: string;
   name: string;
   founder: string;
+  email?: string;
   project: string;
   score: number;
   tier: "Elite Resident" | "Incubator" | "Core Builder";
   status: "pending" | "approved" | "rejected";
+}
+
+interface AccessCode {
+  id: string;
+  code_hint: string;
+  label: string;
+  assigned_email: string | null;
+  tier: string;
+  max_redemptions: number;
+  redemption_count: number;
+  status: "active" | "revoked" | "exhausted" | "expired";
+  expires_at: string | null;
+  created_by: string | null;
+  notes: string | null;
+  created_at: string;
+  updated_at: string;
+}
+
+interface AccessCodeCreatePayload {
+  label: string;
+  assignedEmail?: string;
+  tier: string;
+  maxRedemptions: number;
+  expiresAt?: string | null;
+  notes?: string | null;
 }
 
 interface LogEntry {
@@ -63,6 +91,21 @@ export default function AdminDashboard() {
   // Telemetry grid state
   const [applications, setApplications] = useState<Application[]>([]);
   const [logs, setLogs] = useState<LogEntry[]>([]);
+  const [accessCodes, setAccessCodes] = useState<AccessCode[]>([]);
+  const [accessCodeForm, setAccessCodeForm] = useState({
+    label: "",
+    assignedEmail: "",
+    tier: "Builder",
+    maxRedemptions: "1",
+    expiresAt: "",
+    notes: "",
+  });
+  const [latestAccessCode, setLatestAccessCode] = useState<{
+    code: string;
+    label: string;
+    assignedEmail: string | null;
+  } | null>(null);
+  const [creatingAccessCode, setCreatingAccessCode] = useState(false);
 
   // Toast trigger
   const triggerToast = (msg: string) => {
@@ -112,6 +155,14 @@ export default function AdminDashboard() {
       const logData = await logRes.json();
       if (logData.success) {
         setLogs(logData.data);
+      }
+
+      const accessRes = await fetch("/api/access-codes", {
+        headers: await getAdminFetchHeaders(activeSession),
+      });
+      const accessData = await accessRes.json();
+      if (accessData.success) {
+        setAccessCodes(accessData.data);
       }
     } catch (err) {
       console.error("Telemetry fetch error:", err);
@@ -235,9 +286,112 @@ export default function AdminDashboard() {
     triggerToast("Admin security tunnel closed.");
   };
 
+  const requestAccessCode = async (
+    payload: AccessCodeCreatePayload,
+    successMessage = "Access code created."
+  ) => {
+    const res = await fetch("/api/access-codes", {
+      method: "POST",
+      headers: await getAdminFetchHeaders(),
+      body: JSON.stringify(payload),
+    });
+    const data = (await res.json().catch(() => ({}))) as {
+      code?: string;
+      data?: AccessCode;
+      error?: string;
+      success?: boolean;
+    };
+
+    if (!res.ok || !data.success || !data.code || !data.data) {
+      triggerToast(data.error || "Access code creation failed.");
+      return null;
+    }
+
+    setAccessCodes((prev) => [data.data as AccessCode, ...prev]);
+    setLatestAccessCode({
+      code: data.code,
+      label: data.data.label,
+      assignedEmail: data.data.assigned_email,
+    });
+    triggerToast(successMessage);
+    return data;
+  };
+
+  const handleCreateAccessCode = async (event: React.FormEvent) => {
+    event.preventDefault();
+    setCreatingAccessCode(true);
+
+    try {
+      const created = await requestAccessCode({
+        label: accessCodeForm.label.trim() || "Crucible access grant",
+        assignedEmail: accessCodeForm.assignedEmail.trim().toLowerCase() || undefined,
+        tier: accessCodeForm.tier,
+        maxRedemptions: Number(accessCodeForm.maxRedemptions) || 1,
+        expiresAt: accessCodeForm.expiresAt || null,
+        notes: accessCodeForm.notes.trim() || null,
+      });
+
+      if (created) {
+        setAccessCodeForm({
+          label: "",
+          assignedEmail: "",
+          tier: "Builder",
+          maxRedemptions: "1",
+          expiresAt: "",
+          notes: "",
+        });
+        fetchTelemetryData();
+      }
+    } finally {
+      setCreatingAccessCode(false);
+    }
+  };
+
+  const handleAccessCodeStatus = async (
+    id: string,
+    status: AccessCode["status"]
+  ) => {
+    try {
+      const res = await fetch("/api/access-codes", {
+        method: "PATCH",
+        headers: await getAdminFetchHeaders(),
+        body: JSON.stringify({ id, status }),
+      });
+      const data = (await res.json().catch(() => ({}))) as {
+        data?: AccessCode;
+        error?: string;
+        success?: boolean;
+      };
+
+      if (res.ok && data.success && data.data) {
+        setAccessCodes((prev) =>
+          prev.map((code) => (code.id === id ? (data.data as AccessCode) : code))
+        );
+        triggerToast(`Access code marked ${status}.`);
+        fetchTelemetryData();
+      } else {
+        triggerToast(data.error || "Failed to update access code.");
+      }
+    } catch {
+      triggerToast("Access vault network timed out.");
+    }
+  };
+
+  const handleCopyLatestCode = async () => {
+    if (!latestAccessCode) return;
+
+    try {
+      await navigator.clipboard.writeText(latestAccessCode.code);
+      triggerToast("Access code copied.");
+    } catch {
+      triggerToast(latestAccessCode.code);
+    }
+  };
+
   // Application Approvals
   const handleApprove = async (id: string, name: string) => {
     try {
+      const application = applications.find((app) => app.id === id);
       const res = await fetch("/api/applications", {
         method: "PATCH",
         headers: await getAdminFetchHeaders(),
@@ -245,7 +399,20 @@ export default function AdminDashboard() {
       });
       if (res.ok) {
         setApplications(prev => prev.map(app => app.id === id ? { ...app, status: "approved" } : app));
-        triggerToast(`Application '${name}' Approved!`);
+        if (application) {
+          await requestAccessCode(
+            {
+              label: `${application.name} founder access`,
+              assignedEmail: application.email,
+              tier: application.tier,
+              maxRedemptions: 1,
+              notes: `Generated after approving application ${application.id}.`,
+            },
+            `Application '${name}' approved and access code generated.`
+          );
+        } else {
+          triggerToast(`Application '${name}' Approved!`);
+        }
         fetchTelemetryData(); // Reload logs
       } else {
         triggerToast("Server rejected status transition request.");
@@ -573,10 +740,10 @@ export default function AdminDashboard() {
         {/* 2. Global Core Metrics */}
         <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-6">
           {[
-            { label: "Active Cohort Founders", val: "142", sub: "Vetted Builders", icon: Users },
+            { label: "Active Cohort Founders", val: accessCodes.reduce((total, code) => total + code.redemption_count, 0).toString(), sub: "Redeemed Access Sessions", icon: Users },
             { label: "Total Applications", val: applications.length.toString(), sub: `Pending Review: ${applications.filter(app => app.status === "pending").length}`, icon: TrendingUp },
             { label: "H100 Active Clusters", val: "28 / 32 Nodes", sub: "AlgoForce Shared GPU", icon: Cpu },
-            { label: "Ecosystem Telemetry Pool", val: "94.8%", sub: "Nominal Load Rating", icon: Server }
+            { label: "Access Codes", val: accessCodes.filter(code => code.status === "active").length.toString(), sub: `Total Issued: ${accessCodes.length}`, icon: KeyRound }
           ].map((stat, idx) => {
             const Icon = stat.icon;
             return (
@@ -613,6 +780,7 @@ export default function AdminDashboard() {
               {([
                 { id: "analytics", label: "Analytics Matrix" },
                 { id: "applications", label: "Pending Founders" },
+                { id: "access", label: "Access Vault" },
                 { id: "compute", label: "Compute Overlord" },
                 { id: "broadcast", label: "Broadcast Tower" }
               ] satisfies Array<{ id: AdminTab; label: string }>).map(tab => (
@@ -762,6 +930,11 @@ export default function AdminDashboard() {
                             <div className="flex flex-wrap items-center gap-2 mb-2">
                               <span className="font-mono text-xs font-black text-crucible-navy uppercase">{app.name}</span>
                               <span className="text-[9px] font-mono text-crucible-slate/60 font-semibold">by {app.founder}</span>
+                              {app.email && (
+                                <span className="text-[9px] font-mono text-crucible-slate/60 font-semibold">
+                                  {app.email}
+                                </span>
+                              )}
                               <span className="font-mono text-[9px] font-bold px-2 py-0.5 rounded-full border border-crucible-navy/10 bg-white text-crucible-navy">
                                 {app.tier}
                               </span>
@@ -822,6 +995,247 @@ export default function AdminDashboard() {
                     </div>
                   )}
 
+                </motion.div>
+              )}
+
+              {activeTab === "access" && (
+                <motion.div
+                  initial={{ opacity: 0, y: 10 }}
+                  animate={{ opacity: 1, y: 0 }}
+                  className="p-8 rounded-3xl bg-white border border-crucible-navy/5 shadow-sm flex flex-col gap-6"
+                >
+                  <div>
+                    <h3 className="text-lg font-mono font-black text-crucible-navy uppercase">
+                      Access Code Vault.
+                    </h3>
+                    <p className="text-xs text-crucible-slate mt-1">
+                      Generate team-issued codes and track redemptions into the founder portal.
+                    </p>
+                  </div>
+
+                  {latestAccessCode && (
+                    <div className="p-4 rounded-2xl border border-crucible-amber/25 bg-crucible-amber/10 flex flex-col md:flex-row md:items-center justify-between gap-4">
+                      <div>
+                        <span className="font-mono text-[9px] font-bold uppercase tracking-widest text-crucible-slate/70">
+                          Latest Code
+                        </span>
+                        <p className="font-mono text-lg font-black text-crucible-navy mt-1 tracking-widest">
+                          {latestAccessCode.code}
+                        </p>
+                        <p className="text-[10px] font-semibold text-crucible-slate mt-1">
+                          {latestAccessCode.label}
+                          {latestAccessCode.assignedEmail
+                            ? ` // ${latestAccessCode.assignedEmail}`
+                            : ""}
+                        </p>
+                      </div>
+                      <button
+                        onClick={handleCopyLatestCode}
+                        className="w-fit px-4 py-3 rounded-xl border border-crucible-navy bg-crucible-navy text-white text-[10px] font-mono font-bold uppercase tracking-widest hover:bg-crucible-amber hover:border-crucible-amber flex items-center gap-2 transition-all cursor-pointer"
+                      >
+                        <Copy className="w-3.5 h-3.5" />
+                        <span>Copy</span>
+                      </button>
+                    </div>
+                  )}
+
+                  <form
+                    onSubmit={handleCreateAccessCode}
+                    className="p-5 rounded-2xl border border-crucible-navy/5 bg-crucible-bg/30 flex flex-col gap-4"
+                  >
+                    <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                      <div className="flex flex-col gap-2">
+                        <label className="font-mono text-[10px] font-bold text-crucible-navy uppercase">
+                          Label
+                        </label>
+                        <input
+                          type="text"
+                          placeholder="Cohort 05 founder access"
+                          value={accessCodeForm.label}
+                          onChange={(event) =>
+                            setAccessCodeForm({
+                              ...accessCodeForm,
+                              label: event.target.value,
+                            })
+                          }
+                          className="p-3 rounded-xl border border-crucible-navy/10 bg-white text-xxs font-semibold focus:outline-none focus:border-crucible-amber font-sans"
+                        />
+                      </div>
+
+                      <div className="flex flex-col gap-2">
+                        <label className="font-mono text-[10px] font-bold text-crucible-navy uppercase">
+                          Assigned Email
+                        </label>
+                        <input
+                          type="email"
+                          placeholder="founder@company.ai"
+                          value={accessCodeForm.assignedEmail}
+                          onChange={(event) =>
+                            setAccessCodeForm({
+                              ...accessCodeForm,
+                              assignedEmail: event.target.value,
+                            })
+                          }
+                          className="p-3 rounded-xl border border-crucible-navy/10 bg-white text-xxs font-semibold focus:outline-none focus:border-crucible-amber font-sans"
+                        />
+                      </div>
+
+                      <div className="flex flex-col gap-2">
+                        <label className="font-mono text-[10px] font-bold text-crucible-navy uppercase">
+                          Tier
+                        </label>
+                        <select
+                          value={accessCodeForm.tier}
+                          onChange={(event) =>
+                            setAccessCodeForm({
+                              ...accessCodeForm,
+                              tier: event.target.value,
+                            })
+                          }
+                          className="p-3 rounded-xl border border-crucible-navy/10 bg-white text-xxs font-mono font-bold focus:outline-none focus:border-crucible-amber"
+                        >
+                          <option value="Builder">Builder</option>
+                          <option value="Maker">Maker</option>
+                          <option value="Founder">Founder</option>
+                          <option value="Core Builder">Core Builder</option>
+                          <option value="Incubator">Incubator</option>
+                          <option value="Elite Resident">Elite Resident</option>
+                          <option value="Crucible Studio">Crucible Studio</option>
+                        </select>
+                      </div>
+
+                      <div className="grid grid-cols-2 gap-4">
+                        <div className="flex flex-col gap-2">
+                          <label className="font-mono text-[10px] font-bold text-crucible-navy uppercase">
+                            Uses
+                          </label>
+                          <input
+                            type="number"
+                            min={1}
+                            max={500}
+                            value={accessCodeForm.maxRedemptions}
+                            onChange={(event) =>
+                              setAccessCodeForm({
+                                ...accessCodeForm,
+                                maxRedemptions: event.target.value,
+                              })
+                            }
+                            className="p-3 rounded-xl border border-crucible-navy/10 bg-white text-xxs font-mono font-bold focus:outline-none focus:border-crucible-amber"
+                          />
+                        </div>
+
+                        <div className="flex flex-col gap-2">
+                          <label className="font-mono text-[10px] font-bold text-crucible-navy uppercase">
+                            Expires
+                          </label>
+                          <input
+                            type="date"
+                            value={accessCodeForm.expiresAt}
+                            onChange={(event) =>
+                              setAccessCodeForm({
+                                ...accessCodeForm,
+                                expiresAt: event.target.value,
+                              })
+                            }
+                            className="p-3 rounded-xl border border-crucible-navy/10 bg-white text-xxs font-mono font-bold focus:outline-none focus:border-crucible-amber"
+                          />
+                        </div>
+                      </div>
+                    </div>
+
+                    <div className="flex flex-col gap-2">
+                      <label className="font-mono text-[10px] font-bold text-crucible-navy uppercase">
+                        Notes
+                      </label>
+                      <textarea
+                        rows={3}
+                        placeholder="Internal context for this access grant"
+                        value={accessCodeForm.notes}
+                        onChange={(event) =>
+                          setAccessCodeForm({
+                            ...accessCodeForm,
+                            notes: event.target.value,
+                          })
+                        }
+                        className="p-3 rounded-xl border border-crucible-navy/10 bg-white text-xxs font-semibold focus:outline-none focus:border-crucible-amber font-sans resize-none"
+                      />
+                    </div>
+
+                    <button
+                      type="submit"
+                      disabled={creatingAccessCode}
+                      className="w-fit px-5 py-3 rounded-xl border border-crucible-navy bg-crucible-navy text-white text-[10px] font-mono font-bold tracking-widest uppercase hover:bg-crucible-amber hover:border-crucible-amber flex items-center gap-2 transition-all duration-300 shadow-md cursor-pointer self-end disabled:opacity-60"
+                    >
+                      <Plus className="w-3.5 h-3.5" />
+                      <span>{creatingAccessCode ? "Creating..." : "Create Code"}</span>
+                    </button>
+                  </form>
+
+                  <div className="flex flex-col gap-3">
+                    {accessCodes.map((code) => (
+                      <div
+                        key={code.id}
+                        className="p-4 rounded-2xl border border-crucible-navy/5 bg-crucible-bg/30 flex flex-col md:flex-row md:items-center justify-between gap-4"
+                      >
+                        <div className="min-w-0">
+                          <div className="flex flex-wrap items-center gap-2 mb-2">
+                            <KeyRound className="w-3.5 h-3.5 text-crucible-amber" />
+                            <span className="font-mono text-xs font-black text-crucible-navy uppercase">
+                              {code.label}
+                            </span>
+                            <span
+                              className={`font-mono text-[8px] font-bold px-2 py-0.5 rounded-full border uppercase ${
+                                code.status === "active"
+                                  ? "border-crucible-amber/20 bg-crucible-amber/10 text-crucible-amber"
+                                  : code.status === "revoked"
+                                    ? "border-red-500/20 bg-red-50 text-red-500"
+                                    : "border-crucible-navy/10 bg-white text-crucible-slate"
+                              }`}
+                            >
+                              {code.status}
+                            </span>
+                            <span className="font-mono text-[8px] text-crucible-slate/60 font-bold uppercase">
+                              Ends {code.code_hint}
+                            </span>
+                          </div>
+                          <p className="text-[10px] font-semibold text-crucible-slate leading-relaxed">
+                            {`${code.assigned_email || "Open email claim"} // ${code.tier} // ${code.redemption_count}/${code.max_redemptions} redeemed${
+                              code.expires_at
+                                ? ` // Expires ${new Date(code.expires_at).toLocaleDateString()}`
+                                : ""
+                            }`}
+                          </p>
+                        </div>
+
+                        <div className="flex items-center gap-2">
+                          {code.status === "active" ? (
+                            <button
+                              onClick={() => handleAccessCodeStatus(code.id, "revoked")}
+                              className="px-3 py-2 rounded-xl border border-red-500/10 bg-red-50 hover:bg-red-500 hover:text-white text-red-500 text-[9px] font-mono font-bold uppercase transition-all cursor-pointer"
+                            >
+                              Revoke
+                            </button>
+                          ) : code.status === "revoked" &&
+                            code.redemption_count < code.max_redemptions ? (
+                            <button
+                              onClick={() => handleAccessCodeStatus(code.id, "active")}
+                              className="px-3 py-2 rounded-xl border border-crucible-amber/20 bg-crucible-amber/10 hover:bg-crucible-amber hover:text-white text-crucible-amber text-[9px] font-mono font-bold uppercase transition-all cursor-pointer"
+                            >
+                              Activate
+                            </button>
+                          ) : null}
+                        </div>
+                      </div>
+                    ))}
+
+                    {accessCodes.length === 0 && (
+                      <div className="text-center py-12 border border-dashed border-crucible-navy/10 rounded-2xl bg-crucible-bg/30">
+                        <span className="font-mono text-[10px] text-crucible-slate/50 uppercase font-bold">
+                          No access codes issued yet.
+                        </span>
+                      </div>
+                    )}
+                  </div>
                 </motion.div>
               )}
 

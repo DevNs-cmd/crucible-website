@@ -39,6 +39,10 @@ The repair migration also notifies PostgREST to reload its schema cache, which c
 
 Optional demo data lives in `supabase/seed.sql`.
 
+## Access Code Flow
+
+Admins create invite codes from `/admin` in the Access Vault tab. The raw code is shown once, then only a hashed version is stored in Supabase. Give that code to the user, have them open `/access`, enter the code plus their email, and the site creates a secure founder portal session before sending them to `/dashboard`.
+
 For Google sign-in, enable Google under Supabase Authentication Providers. Use this client ID:
 
 ```text

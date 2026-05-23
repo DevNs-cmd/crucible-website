@@ -99,7 +99,7 @@ export default function Membership() {
 
               <div className="mt-8">
                 <Link
-                  href="/apply"
+                  href="/access"
                   className="w-full py-3.5 rounded-xl border border-crucible-navy bg-crucible-navy text-white text-[10px] font-mono font-bold tracking-widest uppercase hover:bg-transparent hover:text-crucible-navy flex items-center justify-center gap-1.5 transition-all shadow-sm"
                 >
                   <span>Apply access</span>
